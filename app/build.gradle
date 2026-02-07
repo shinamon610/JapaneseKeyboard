@@ -26,12 +26,14 @@ android {
     }
 
     defaultConfig {
-        applicationId "com.kazumaproject.markdownhelperkeyboard"
+        applicationId "com.denshina.ime"
         minSdk 24
         targetSdk 36
         versionCode 684
         versionName "1.6.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        // Limit packaged locales to Japanese so ja resources act as defaults
+        resConfigs 'ja'
     }
 
     def shouldSplitApks = project.hasProperty('splitApks')
@@ -89,6 +91,9 @@ android {
 }
 
 dependencies {
+    // Pin core to a version compatible with AGP 8.7.2
+    implementation 'androidx.core:core:1.13.1'
+    implementation 'androidx.core:core-ktx:1.13.1'
     implementation 'androidx.appcompat:appcompat:1.7.1'
     implementation 'com.google.android.material:material:1.13.0'
 
