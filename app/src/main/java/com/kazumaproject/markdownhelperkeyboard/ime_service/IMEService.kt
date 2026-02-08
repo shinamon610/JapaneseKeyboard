@@ -4862,17 +4862,6 @@ class IMEService : InputMethodService(), LifecycleOwner, InputConnection,
         scope.launch(Dispatchers.IO) {
             if (customLayouts.isEmpty()) {
                 Timber.d("setKeyboardTab: customLayouts.isEmpty()")
-                if (customLayouts.isNotEmpty()) {
-                    val id = customLayouts[pos].layoutId
-                    val dbLayout = keyboardRepository.getFullLayout(id).first()
-                    Timber.d("setKeyboardTab: $id $dbLayout")
-                    val finalLayout = keyboardRepository.convertLayout(dbLayout)
-                    Timber.d("setKeyboardTab: ${dbLayout.isRomaji} ${finalLayout.isRomaji}")
-                    isCustomLayoutRomajiMode = finalLayout.isRomaji
-                    withContext(Dispatchers.Main) {
-                        mainLayoutBinding?.customLayoutDefault?.setKeyboard(finalLayout)
-                    }
-                }
                 return@launch
             }
             val id = customLayouts[pos].layoutId
