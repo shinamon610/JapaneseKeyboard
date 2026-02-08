@@ -4653,9 +4653,10 @@ class IMEService : InputMethodService(), LifecycleOwner, InputConnection,
 
                 KeyboardType.CUSTOM -> {
                     Timber.d("updateKeyboardLayout CUSTOM: $isFlickOnlyMode $sumireInputKeyType")
-                    setInitialKeyboardTab()
-                    setKeyboardTab(0)
+
                     if (qwertyMode.value != TenKeyQWERTYMode.Number) {
+                        setInitialKeyboardTab()
+                        setKeyboardTab(0)
                         _tenKeyQWERTYMode.update { TenKeyQWERTYMode.Custom }
                     } else {
                         customLayoutDefault.setKeyboard(KeyboardDefaultLayouts.createNumberLayout())
@@ -4848,6 +4849,9 @@ class IMEService : InputMethodService(), LifecycleOwner, InputConnection,
 
             isCustomLayoutRomajiMode = finalLayout.isRomaji
             withContext(Dispatchers.Main) {
+                if (currentInputType in numberTypes || qwertyMode.value == TenKeyQWERTYMode.Number) {
+                    return@withContext
+                }
                 mainLayoutBinding?.customLayoutDefault?.setKeyboard(finalLayout)
             }
         }
@@ -4878,6 +4882,9 @@ class IMEService : InputMethodService(), LifecycleOwner, InputConnection,
             Timber.d("setKeyboardTab: ${dbLayout.isRomaji} ${finalLayout.isRomaji}")
             isCustomLayoutRomajiMode = finalLayout.isRomaji
             withContext(Dispatchers.Main) {
+                if (currentInputType in numberTypes || qwertyMode.value == TenKeyQWERTYMode.Number) {
+                    return@withContext
+                }
                 mainLayoutBinding?.customLayoutDefault?.setKeyboard(finalLayout)
             }
         }
