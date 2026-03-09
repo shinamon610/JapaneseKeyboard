@@ -28,11 +28,11 @@ android {
         jvmTarget = '17'
     }
 
-    lintOptions {
-        abortOnError false
-    }
 
     namespace 'com.kazumaproject.symbol_keyboard'
+    lint {
+        abortOnError false
+    }
 }
 
 dependencies {
@@ -45,8 +45,8 @@ dependencies {
     androidTestImplementation 'androidx.test.espresso:espresso-core:3.5.1'
 
     // Room
-    implementation "androidx.room:room-runtime:2.6.1"
-    ksp "androidx.room:room-compiler:2.6.1"
+    implementation "androidx.room:room-runtime:2.7.2"
+    ksp "androidx.room:room-compiler:2.7.2"
     // Kotlin Extensions and Coroutines support for Room
-    implementation "androidx.room:room-ktx:2.6.1"
+    implementation "androidx.room:room-ktx:2.7.2"
 }

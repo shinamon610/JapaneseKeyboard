@@ -23,7 +23,7 @@ import android.os.Vibrator
 import android.os.VibratorManager
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
-import android.speech.SpeechRecognizer
+import android.speech.SpeechRecognizer as AndroidSpeechRecognizer
 import android.text.Spannable
 import android.text.SpannableString
 import android.text.style.BackgroundColorSpan
@@ -75,6 +75,13 @@ import androidx.lifecycle.LifecycleRegistry
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.google.mlkit.genai.common.FeatureStatus
+import com.google.mlkit.genai.common.audio.AudioSource
+import com.google.mlkit.genai.speechrecognition.SpeechRecognition
+import com.google.mlkit.genai.speechrecognition.SpeechRecognizer as MlKitSpeechRecognizer
+import com.google.mlkit.genai.speechrecognition.SpeechRecognizerOptions
+import com.google.mlkit.genai.speechrecognition.SpeechRecognizerRequest
+import com.google.mlkit.genai.speechrecognition.SpeechRecognizerResponse
 import com.google.android.material.color.DynamicColors
 import com.google.android.material.color.DynamicColorsOptions
 import com.google.android.material.tabs.TabLayout
@@ -216,6 +223,7 @@ import java.io.IOException
 import java.text.BreakIterator
 import java.text.SimpleDateFormat
 import java.util.Calendar
+import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import java.util.regex.Pattern
@@ -300,7 +308,9 @@ class IMEService : InputMethodService(), LifecycleOwner, InputConnection,
     private var henkanPressedWithBunsetsuDetect: Boolean = false
     private var conversionKeySwipePreference: Boolean? = false
 
-    private var speechRecognizer: SpeechRecognizer? = null
+    private var speechRecognizer: AndroidSpeechRecognizer? = null
+    private var mlKitSpeechRecognizer: MlKitSpeechRecognizer? = null
+    private var mlKitVoiceInputJob: Job? = null
     private var isListening = false
     private var liveVoiceInputText: String = ""
     private var isVoiceInputInterruptedByKeyboard = false
@@ -797,8 +807,8 @@ class IMEService : InputMethodService(), LifecycleOwner, InputConnection,
             shortCurRepository.initDefaultShortcutsIfNeeded()
         }
 
-        if (SpeechRecognizer.isRecognitionAvailable(this)) {
-            speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this).apply {
+        if (AndroidSpeechRecognizer.isRecognitionAvailable(this)) {
+            speechRecognizer = AndroidSpeechRecognizer.createSpeechRecognizer(this).apply {
                 setRecognitionListener(object : RecognitionListener {
                     override fun onReadyForSpeech(params: Bundle?) {
                         mainLayoutBinding?.suggestionProgressbar?.isVisible = true
@@ -835,7 +845,7 @@ class IMEService : InputMethodService(), LifecycleOwner, InputConnection,
                             return
                         }
                         val matches =
-                            results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                            results?.getStringArrayList(AndroidSpeechRecognizer.RESULTS_RECOGNITION)
                         val text = matches?.firstOrNull() ?: return
                         liveVoiceInputText = text
                         commitRecognizedText(text)
@@ -845,7 +855,7 @@ class IMEService : InputMethodService(), LifecycleOwner, InputConnection,
 
                     override fun onPartialResults(partialResults: Bundle?) {
                         val matches =
-                            partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                            partialResults?.getStringArrayList(AndroidSpeechRecognizer.RESULTS_RECOGNITION)
                         val text = matches?.firstOrNull() ?: return
                         liveVoiceInputText = text
                         updateComposingText(text)
@@ -1711,6 +1721,9 @@ class IMEService : InputMethodService(), LifecycleOwner, InputConnection,
 
         inputManager.unregisterInputDeviceListener(this)
         actionInDestroy()
+        mlKitVoiceInputJob?.cancel()
+        mlKitVoiceInputJob = null
+        closeMlKitSpeechRecognizer()
         speechRecognizer?.destroy()
         speechRecognizer = null
         System.gc()
@@ -1854,68 +1867,139 @@ class IMEService : InputMethodService(), LifecycleOwner, InputConnection,
     }
 
     private fun commitRecognizedText(text: String) {
-        // 確定時：composing を消してから確定文字列を commit
+        // 確定時は composing 中の文字列を最終結果で置き換えてから確定する。
+        // finishComposingText() の後に commitText() すると二重入力になる。
         currentInputConnection?.apply {
+            setComposingText(text, 1)
             finishComposingText()
-            commitText(text, 1)
         }
     }
 
-    private fun startVoiceInput(
-        mainView: MainLayoutBinding
-    ) {
-        Timber.d("startVoiceInput: [$isListening] [$speechRecognizer]")
-        mainView.suggestionProgressbar.isVisible = false
-        if (isListening) return
-        if (speechRecognizer == null) return
+    private fun resolveVoiceInputLanguage(mainView: MainLayoutBinding): String = when {
+        qwertyMode.value == TenKeyQWERTYMode.TenKeyQWERTY -> {
+            "en-CA"
+        }
 
-        val languageValue: String = when {
-            qwertyMode.value == TenKeyQWERTYMode.TenKeyQWERTY -> {
+        qwertyMode.value == TenKeyQWERTYMode.TenKeyQWERTYRomaji -> {
+            if (mainView.qwertyView.getRomajiMode()) {
+                "ja-JP"
+            } else {
                 "en-CA"
             }
+        }
 
-            qwertyMode.value == TenKeyQWERTYMode.TenKeyQWERTYRomaji -> {
-                if (mainView.qwertyView.getRomajiMode()) {
-                    "ja-JP"
-                } else {
-                    "en-CA"
-                }
+        isTablet == true -> {
+            when (mainView.tabletView.currentInputMode.get()) {
+                InputMode.ModeJapanese -> "ja-JP"
+                InputMode.ModeEnglish -> "en-CA"
+                InputMode.ModeNumber -> "ja-JP"
+            }
+        }
+
+        isTablet != true -> {
+            when (mainView.keyboardView.currentInputMode.value) {
+                InputMode.ModeJapanese -> "ja-JP"
+                InputMode.ModeEnglish -> "en-CA"
+                InputMode.ModeNumber -> "ja-JP"
+            }
+        }
+
+        else -> {
+            "ja-JP"
+        }
+    }
+
+    private fun createMlKitSpeechRecognizer(languageTag: String): MlKitSpeechRecognizer {
+        val optionsBuilder = SpeechRecognizerOptions.Builder()
+        optionsBuilder.locale = Locale.forLanguageTag(languageTag)
+        optionsBuilder.preferredMode = SpeechRecognizerOptions.Mode.MODE_BASIC
+        val options = optionsBuilder.build()
+        return SpeechRecognition.getClient(options)
+    }
+
+    private suspend fun startMlKitVoiceInput(
+        mainView: MainLayoutBinding,
+        languageTag: String
+    ) {
+        closeMlKitSpeechRecognizer()
+
+        val recognizer = createMlKitSpeechRecognizer(languageTag)
+        mlKitSpeechRecognizer = recognizer
+
+        when (val status = recognizer.checkStatus()) {
+            FeatureStatus.UNAVAILABLE -> {
+                Timber.w("MLKit voice unavailable for %s", languageTag)
+                closeMlKitSpeechRecognizer()
+                startLegacyVoiceInput(mainView, languageTag)
+                return
             }
 
-            isTablet == true -> {
-                when (mainView.tabletView.currentInputMode.get()) {
-                    InputMode.ModeJapanese -> "ja-JP"
-                    InputMode.ModeEnglish -> "en-CA"
-                    InputMode.ModeNumber -> "ja-JP"
-                }
-            }
-
-            isTablet != true -> {
-                when (mainView.keyboardView.currentInputMode.value) {
-                    InputMode.ModeJapanese -> "ja-JP"
-                    InputMode.ModeEnglish -> "en-CA"
-                    InputMode.ModeNumber -> "ja-JP"
+            FeatureStatus.DOWNLOADABLE, FeatureStatus.DOWNLOADING -> {
+                Timber.i("MLKit voice downloading for %s status=%s", languageTag, status)
+                recognizer.download().collect { downloadStatus ->
+                    Timber.i("MLKit voice download[%s]=%s", languageTag, downloadStatus)
                 }
             }
 
             else -> {
-                "ja-JP"
+                Timber.i("MLKit voice available for %s status=%s", languageTag, status)
             }
         }
 
+        val requestBuilder = SpeechRecognizerRequest.Builder()
+        requestBuilder.audioSource = AudioSource.fromMic()
+        val request = requestBuilder.build()
+
+        isVoiceInputInterruptedByKeyboard = false
+        liveVoiceInputText = ""
+        isListening = true
+        mainView.suggestionProgressbar.isVisible = true
+
+        try {
+            recognizer.startRecognition(request).collect { response ->
+                when (response) {
+                    is SpeechRecognizerResponse.PartialTextResponse -> {
+                        liveVoiceInputText = response.text
+                        updateComposingText(response.text)
+                    }
+
+                    is SpeechRecognizerResponse.FinalTextResponse -> {
+                        liveVoiceInputText = response.text
+                        commitRecognizedText(response.text)
+                        liveVoiceInputText = ""
+                    }
+
+                    is SpeechRecognizerResponse.ErrorResponse -> {
+                        Timber.w("MLKit voice error[%s]: %s", languageTag, response)
+                    }
+
+                    is SpeechRecognizerResponse.CompletedResponse -> {
+                        Timber.d("MLKit voice completed for %s", languageTag)
+                    }
+                }
+            }
+        } finally {
+            isListening = false
+            mainLayoutBinding?.suggestionProgressbar?.isVisible = false
+            closeMlKitSpeechRecognizer()
+        }
+    }
+
+    private fun startLegacyVoiceInput(mainView: MainLayoutBinding, languageTag: String) {
+        val recognizer = speechRecognizer ?: return
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(
                 RecognizerIntent.EXTRA_LANGUAGE_MODEL,
                 RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
             )
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, languageValue)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, languageTag)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
         }
 
         try {
             isVoiceInputInterruptedByKeyboard = false
             liveVoiceInputText = ""
-            speechRecognizer?.startListening(intent)
+            recognizer.startListening(intent)
             isListening = true
             mainView.suggestionProgressbar.isVisible = true
         } catch (e: SecurityException) {
@@ -1924,14 +2008,61 @@ class IMEService : InputMethodService(), LifecycleOwner, InputConnection,
         }
     }
 
+    private fun closeMlKitSpeechRecognizer() {
+        try {
+            mlKitSpeechRecognizer?.close()
+        } catch (_: Exception) {
+        } finally {
+            mlKitSpeechRecognizer = null
+        }
+    }
+
+    private fun startVoiceInput(
+        mainView: MainLayoutBinding
+    ) {
+        Timber.d("startVoiceInput: [$isListening] [$speechRecognizer] [$mlKitSpeechRecognizer]")
+        mainView.suggestionProgressbar.isVisible = false
+        if (isListening) return
+        val languageValue = resolveVoiceInputLanguage(mainView)
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            mlKitVoiceInputJob?.cancel()
+            mlKitVoiceInputJob = scope.launch {
+                try {
+                    startMlKitVoiceInput(mainView, languageValue)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Timber.w(e, "MLKit voice start failed. Falling back to Android SpeechRecognizer")
+                    closeMlKitSpeechRecognizer()
+                    startLegacyVoiceInput(mainView, languageValue)
+                } finally {
+                    mlKitVoiceInputJob = null
+                }
+            }
+            return
+        }
+
+        startLegacyVoiceInput(mainView, languageValue)
+    }
+
     private fun stopVoiceInput() {
-        if (!isListening) return
+        if (!isListening && mlKitVoiceInputJob == null) return
+        scope.launch {
+            try {
+                mlKitSpeechRecognizer?.stopRecognition()
+            } catch (_: Exception) {
+            }
+        }
+        mlKitVoiceInputJob?.cancel()
+        mlKitVoiceInputJob = null
         try {
             speechRecognizer?.stopListening()
         } catch (_: Exception) {
         } finally {
             isListening = false
             mainLayoutBinding?.suggestionProgressbar?.isVisible = false
+            closeMlKitSpeechRecognizer()
         }
     }
 
@@ -1945,12 +2076,21 @@ class IMEService : InputMethodService(), LifecycleOwner, InputConnection,
         }
 
         isVoiceInputInterruptedByKeyboard = true
+        scope.launch {
+            try {
+                mlKitSpeechRecognizer?.stopRecognition()
+            } catch (_: Exception) {
+            }
+        }
+        mlKitVoiceInputJob?.cancel()
+        mlKitVoiceInputJob = null
         try {
             speechRecognizer?.cancel()
         } catch (_: Exception) {
         } finally {
             isListening = false
             mainLayoutBinding?.suggestionProgressbar?.isVisible = false
+            closeMlKitSpeechRecognizer()
         }
     }
 

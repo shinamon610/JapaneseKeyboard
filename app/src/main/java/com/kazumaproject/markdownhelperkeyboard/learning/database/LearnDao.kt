@@ -15,7 +15,7 @@ interface LearnDao {
     suspend fun insert(learnData: LearnEntity)
 
     @Query("SELECT out, score FROM learn_table WHERE input = :input")
-    suspend fun findByInput(input: String): List<LearnResult>?
+    suspend fun findByInput(input: String): List<LearnResult>
 
     @Query("SELECT * FROM learn_table WHERE input = :input AND out = :output LIMIT 1")
     suspend fun findByInputAndOutput(input: String, output: String): LearnEntity?
