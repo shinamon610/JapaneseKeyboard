@@ -216,7 +216,6 @@ import java.io.IOException
 import java.text.BreakIterator
 import java.text.SimpleDateFormat
 import java.util.Calendar
-import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import java.util.regex.Pattern
@@ -303,6 +302,8 @@ class IMEService : InputMethodService(), LifecycleOwner, InputConnection,
 
     private var speechRecognizer: SpeechRecognizer? = null
     private var isListening = false
+    private var liveVoiceInputText: String = ""
+    private var isVoiceInputInterruptedByKeyboard = false
 
     /**
      * クリップボードの内容が変更されたときに呼び出されるリスナー。
@@ -815,15 +816,30 @@ class IMEService : InputMethodService(), LifecycleOwner, InputConnection,
 
                     override fun onError(error: Int) {
                         isListening = false
+                        if (isVoiceInputInterruptedByKeyboard) {
+                            isVoiceInputInterruptedByKeyboard = false
+                            liveVoiceInputText = ""
+                            mainLayoutBinding?.suggestionProgressbar?.isVisible = false
+                            return
+                        }
+                        liveVoiceInputText = ""
                         mainLayoutBinding?.suggestionProgressbar?.isVisible = false
                     }
 
                     override fun onResults(results: Bundle?) {
                         isListening = false
+                        if (isVoiceInputInterruptedByKeyboard) {
+                            isVoiceInputInterruptedByKeyboard = false
+                            liveVoiceInputText = ""
+                            mainLayoutBinding?.suggestionProgressbar?.isVisible = false
+                            return
+                        }
                         val matches =
                             results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                         val text = matches?.firstOrNull() ?: return
-                        _inputString.update { text }
+                        liveVoiceInputText = text
+                        commitRecognizedText(text)
+                        liveVoiceInputText = ""
                         mainLayoutBinding?.suggestionProgressbar?.isVisible = false
                     }
 
@@ -831,7 +847,8 @@ class IMEService : InputMethodService(), LifecycleOwner, InputConnection,
                         val matches =
                             partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                         val text = matches?.firstOrNull() ?: return
-                        _inputString.update { text }
+                        liveVoiceInputText = text
+                        updateComposingText(text)
                     }
 
                     override fun onEvent(eventType: Int, params: Bundle?) {}
@@ -1891,17 +1908,19 @@ class IMEService : InputMethodService(), LifecycleOwner, InputConnection,
                 RecognizerIntent.EXTRA_LANGUAGE_MODEL,
                 RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
             )
-            // 日本語固定にしたければ "ja-JP"
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, languageValue)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
         }
 
         try {
+            isVoiceInputInterruptedByKeyboard = false
+            liveVoiceInputText = ""
             speechRecognizer?.startListening(intent)
             isListening = true
+            mainView.suggestionProgressbar.isVisible = true
         } catch (e: SecurityException) {
-            // RECORD_AUDIO が許可されていないなど
             isListening = false
+            mainView.suggestionProgressbar.isVisible = false
         }
     }
 
@@ -1912,6 +1931,26 @@ class IMEService : InputMethodService(), LifecycleOwner, InputConnection,
         } catch (_: Exception) {
         } finally {
             isListening = false
+            mainLayoutBinding?.suggestionProgressbar?.isVisible = false
+        }
+    }
+
+    private fun interruptVoiceInputForKeyboardInteraction() {
+        if (!isListening) return
+
+        val partialText = liveVoiceInputText
+        if (partialText.isNotEmpty()) {
+            commitRecognizedText(partialText)
+            liveVoiceInputText = ""
+        }
+
+        isVoiceInputInterruptedByKeyboard = true
+        try {
+            speechRecognizer?.cancel()
+        } catch (_: Exception) {
+        } finally {
+            isListening = false
+            mainLayoutBinding?.suggestionProgressbar?.isVisible = false
         }
     }
 
@@ -4997,6 +5036,7 @@ class IMEService : InputMethodService(), LifecycleOwner, InputConnection,
 
             override fun onKey(text: String, isFlick: Boolean) {
                 // 通常の文字が入力された場合（変更なし）
+                interruptVoiceInputForKeyboardInteraction()
                 clearDeleteBufferWithView()
                 Timber.d("onKey: [$text] [${qwertyMode.value}] [$isDefaultRomajiHenkanMap]")
                 vibrate()
@@ -5076,6 +5116,9 @@ class IMEService : InputMethodService(), LifecycleOwner, InputConnection,
             }
 
             override fun onActionLongPress(action: KeyAction) {
+                if (action != KeyAction.VoiceInput) {
+                    interruptVoiceInputForKeyboardInteraction()
+                }
                 vibrate()
                 clearDeleteBufferWithView()
                 Timber.d("onActionLongPress: $action")
@@ -5301,6 +5344,9 @@ class IMEService : InputMethodService(), LifecycleOwner, InputConnection,
 
             override fun onFlickActionLongPress(action: KeyAction) {
                 Timber.d("onFlickActionLongPress: $action")
+                if (action != KeyAction.VoiceInput) {
+                    interruptVoiceInputForKeyboardInteraction()
+                }
                 vibrate()
                 when (action) {
                     KeyAction.Backspace -> {}
@@ -5421,6 +5467,9 @@ class IMEService : InputMethodService(), LifecycleOwner, InputConnection,
             }
 
             override fun onFlickActionUpAfterLongPress(action: KeyAction, isFlick: Boolean) {
+                if (action != KeyAction.VoiceInput) {
+                    interruptVoiceInputForKeyboardInteraction()
+                }
                 vibrate()
                 Timber.d("onFlickActionUpAfterLongPress: $action $isFlick")
                 when (action) {
@@ -5557,6 +5606,9 @@ class IMEService : InputMethodService(), LifecycleOwner, InputConnection,
             }
 
             override fun onAction(action: KeyAction, view: View, isFlick: Boolean) {
+                if (action != KeyAction.VoiceInput) {
+                    interruptVoiceInputForKeyboardInteraction()
+                }
                 vibrate()
 
                 Timber.d("onAction: $action $isFlick")
