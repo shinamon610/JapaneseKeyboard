@@ -118,6 +118,10 @@ object KeyActionMapper {
                 KeyAction.VoiceInput,
                 context.getString(R.string.voice_input),
                 com.kazumaproject.core.R.drawable.settings_voice_24px
+            ),
+            DisplayAction(
+                KeyAction.Proofread,
+                context.getString(R.string.action_proofread)
             )
         )
     }
@@ -152,6 +156,7 @@ object KeyActionMapper {
             is KeyAction.DeleteUntilSymbol -> "DeleteUntilSymbol"
             is KeyAction.ToggleKatakana -> "SwitchKatakana"
             is KeyAction.VoiceInput -> "VoiceInput"
+            is KeyAction.Proofread -> "Proofread"
             else -> null
         }
     }
@@ -186,6 +191,7 @@ object KeyActionMapper {
             "DeleteUntilSymbol" -> KeyAction.DeleteUntilSymbol
             "SwitchKatakana" -> KeyAction.ToggleKatakana
             "VoiceInput" -> KeyAction.VoiceInput
+            "Proofread" -> KeyAction.Proofread
             else -> null
         }
     }

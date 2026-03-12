@@ -321,6 +321,7 @@ object AppPreference {
 
     private val TYPO_CORRECTION_EN_QWERTY =
         Pair("enable_typo_correction_qwerty_english_keyboard_preference", false)
+    private val GEMINI_API_KEY_PREFERENCE = Pair("gemini_api_key_preference", "")
 
     fun init(context: Context) {
         preferences = PreferenceManager.getDefaultSharedPreferences(context)
@@ -1515,6 +1516,15 @@ object AppPreference {
         )
         set(value) = preferences.edit {
             it.putBoolean(TYPO_CORRECTION_EN_QWERTY.first, value)
+        }
+
+    var gemini_api_key_preference: String
+        get() = preferences.getString(
+            GEMINI_API_KEY_PREFERENCE.first,
+            GEMINI_API_KEY_PREFERENCE.second
+        ) ?: ""
+        set(value) = preferences.edit {
+            it.putString(GEMINI_API_KEY_PREFERENCE.first, value)
         }
 
     /**

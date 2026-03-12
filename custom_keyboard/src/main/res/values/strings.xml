@@ -25,4 +25,5 @@
     <string name="switch_number">Switch to Number Keyboard</string>
     <string name="action_delete_until_symbol">Delete until symbols</string>
     <string name="voice_input">Voice Input</string>
+    <string name="action_proofread">Proofread</string>
 </resources>

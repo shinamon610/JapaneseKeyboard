@@ -18,6 +18,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.CombinedVibration
 import android.os.Handler
+import android.os.SystemClock
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
@@ -55,6 +56,7 @@ import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.PopupWindow
 import android.widget.TextView
+import android.widget.Toast
 import androidx.annotation.ColorInt
 import androidx.appcompat.view.ContextThemeWrapper
 import androidx.appcompat.widget.AppCompatImageButton
@@ -137,6 +139,7 @@ import com.kazumaproject.markdownhelperkeyboard.converter.engine.KanaKanjiEngine
 import com.kazumaproject.markdownhelperkeyboard.custom_keyboard.data.CustomKeyboardLayout
 import com.kazumaproject.markdownhelperkeyboard.databinding.FloatingKeyboardLayoutBinding
 import com.kazumaproject.markdownhelperkeyboard.databinding.MainLayoutBinding
+import com.kazumaproject.markdownhelperkeyboard.gemini.GeminiProofreadClient
 import com.kazumaproject.markdownhelperkeyboard.ime_service.adapters.FloatingCandidateListAdapter
 import com.kazumaproject.markdownhelperkeyboard.ime_service.adapters.GridSpacingItemDecoration
 import com.kazumaproject.markdownhelperkeyboard.ime_service.adapters.ShortcutAdapter
@@ -311,9 +314,11 @@ class IMEService : InputMethodService(), LifecycleOwner, InputConnection,
     private var speechRecognizer: AndroidSpeechRecognizer? = null
     private var mlKitSpeechRecognizer: MlKitSpeechRecognizer? = null
     private var mlKitVoiceInputJob: Job? = null
+    private var proofreadJob: Job? = null
     private var isListening = false
     private var liveVoiceInputText: String = ""
     private var isVoiceInputInterruptedByKeyboard = false
+    private val geminiProofreadClient = GeminiProofreadClient()
 
     /**
      * クリップボードの内容が変更されたときに呼び出されるリスナー。
@@ -651,6 +656,8 @@ class IMEService : InputMethodService(), LifecycleOwner, InputConnection,
 
     companion object {
         private const val LONG_DELAY_TIME = 64L
+        private const val MIN_LONG_DELAY_TIME = 6L
+        private const val DELETE_LONG_PRESS_ACCEL_DURATION_MS = 2_000L
         private const val DEFAULT_DELAY_MS = 1000L
         private const val PAGE_SIZE: Int = 5
 
@@ -1723,6 +1730,8 @@ class IMEService : InputMethodService(), LifecycleOwner, InputConnection,
         actionInDestroy()
         mlKitVoiceInputJob?.cancel()
         mlKitVoiceInputJob = null
+        proofreadJob?.cancel()
+        proofreadJob = null
         closeMlKitSpeechRecognizer()
         speechRecognizer?.destroy()
         speechRecognizer = null
@@ -1872,6 +1881,80 @@ class IMEService : InputMethodService(), LifecycleOwner, InputConnection,
         currentInputConnection?.apply {
             setComposingText(text, 1)
             finishComposingText()
+        }
+    }
+
+    private fun showShortToast(messageResId: Int) {
+        Handler(mainLooper).post {
+            Toast.makeText(applicationContext, getString(messageResId), Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private suspend fun proofreadSelectedText(mainView: MainLayoutBinding) {
+        val apiKey = appPreference.gemini_api_key_preference.trim()
+        Timber.i("Proofread start apiKeySet=%s", apiKey.isNotEmpty())
+        if (apiKey.isEmpty()) {
+            showShortToast(R.string.proofread_api_key_required)
+            return
+        }
+
+        val selectedText = currentInputConnection?.getSelectedText(0)?.toString()?.trim()
+        Timber.i(
+            "Proofread selectedText length=%d text=%s",
+            selectedText?.length ?: 0,
+            selectedText?.take(200)
+        )
+        if (selectedText.isNullOrEmpty()) {
+            showShortToast(R.string.proofread_selection_required)
+            return
+        }
+
+        val glossaryEntries = if (isUserDictionaryEnable == true) {
+            userDictionaryRepository.getAllWordsSuspend().map { "${it.word}\t${it.reading}" }
+        } else {
+            emptyList()
+        }
+        Timber.i("Proofread glossaryCount=%d", glossaryEntries.size)
+
+        mainView.suggestionProgressbar.isVisible = true
+        try {
+            val correctedText = geminiProofreadClient.proofread(
+                apiKey = apiKey,
+                selectedText = selectedText,
+                glossaryEntries = glossaryEntries
+            )
+            Timber.i(
+                "Proofread applying correctedLength=%d corrected=%s",
+                correctedText.length,
+                correctedText.take(200)
+            )
+            currentInputConnection?.apply {
+                finishComposingText()
+                beginBatchEdit()
+                commitText(correctedText, 1)
+                endBatchEdit()
+            }
+            Timber.i("Proofread commit complete")
+        } catch (e: Exception) {
+            Timber.w(e, "Failed to proofread selected text.")
+            showShortToast(R.string.proofread_failed)
+        } finally {
+            mainView.suggestionProgressbar.isVisible = false
+        }
+    }
+
+    private fun startProofread(mainView: MainLayoutBinding) {
+        Timber.i("Proofread key pressed activeJob=%s", proofreadJob?.isActive == true)
+        if (proofreadJob?.isActive == true) {
+            showShortToast(R.string.proofread_in_progress)
+            return
+        }
+        proofreadJob = scope.launch {
+            try {
+                proofreadSelectedText(mainView)
+            } finally {
+                proofreadJob = null
+            }
         }
     }
 
@@ -5181,6 +5264,11 @@ class IMEService : InputMethodService(), LifecycleOwner, InputConnection,
                 Timber.d("onKey: [$text] [${qwertyMode.value}] [$isDefaultRomajiHenkanMap]")
                 vibrate()
 
+                if (text == " ") {
+                    handleCustomHalfSpaceKey()
+                    return
+                }
+
                 when (qwertyMode.value) {
                     TenKeyQWERTYMode.Custom -> {
                         if (text.isEmpty()) return
@@ -5419,6 +5507,7 @@ class IMEService : InputMethodService(), LifecycleOwner, InputConnection,
                     KeyAction.MoveCursorUp -> {}
                     KeyAction.Cancel -> {}
                     KeyAction.VoiceInput -> {}
+                    KeyAction.Proofread -> {}
                 }
             }
 
@@ -5474,6 +5563,7 @@ class IMEService : InputMethodService(), LifecycleOwner, InputConnection,
                     }
 
                     KeyAction.VoiceInput -> {}
+                    KeyAction.Proofread -> {}
                 }
             }
 
@@ -5603,6 +5693,7 @@ class IMEService : InputMethodService(), LifecycleOwner, InputConnection,
                     KeyAction.MoveCursorUp -> {}
                     KeyAction.Cancel -> {}
                     KeyAction.VoiceInput -> {}
+                    KeyAction.Proofread -> {}
                 }
             }
 
@@ -5742,6 +5833,7 @@ class IMEService : InputMethodService(), LifecycleOwner, InputConnection,
                     }
 
                     KeyAction.VoiceInput -> {}
+                    KeyAction.Proofread -> {}
                 }
             }
 
@@ -6077,6 +6169,9 @@ class IMEService : InputMethodService(), LifecycleOwner, InputConnection,
                     KeyAction.VoiceInput -> {
                         startVoiceInput(mainView)
                     }
+                    KeyAction.Proofread -> {
+                        startProofread(mainView)
+                    }
                 }
             }
         })
@@ -6108,6 +6203,25 @@ class IMEService : InputMethodService(), LifecycleOwner, InputConnection,
             }
         }
 
+    }
+
+    private fun handleCustomHalfSpaceKey() {
+        finishComposingText()
+        setComposingText("", 0)
+        commitText(" ", 1)
+
+        _inputString.update { "" }
+        stringInTail.set("")
+        suggestionAdapter?.suggestions = emptyList()
+        suggestionAdapter?.updateHighlightPosition(RecyclerView.NO_POSITION)
+        suggestionClickNum = 0
+        isHenkan.set(false)
+        henkanPressedWithBunsetsuDetect = false
+        isFirstClickHasStringTail = false
+        isContinuousTapInputEnabled.set(false)
+        lastFlickConvertedNextHiragana.set(false)
+        englishSpaceKeyPressed.set(false)
+        _dakutenPressed.value = false
     }
 
     private fun cancelLeftLongPress() {
@@ -11357,6 +11471,7 @@ class IMEService : InputMethodService(), LifecycleOwner, InputConnection,
         if (deleteLongPressJob?.isActive == true) return
         val inputStringInBeginning = inputString.value
         deleteLongPressJob = scope.launch {
+            val longPressStartTime = SystemClock.elapsedRealtime()
             while (isActive && deleteKeyLongKeyPressed.get()) {
                 val current = inputString.value
                 val tailIsEmpty = stringInTail.get().isEmpty()
@@ -11389,7 +11504,7 @@ class IMEService : InputMethodService(), LifecycleOwner, InputConnection,
                     }
                 }
 
-                delay(LONG_DELAY_TIME)
+                delay(calculateDeleteLongPressDelay(longPressStartTime))
             }
             // （連続タップ入力解除など）
             enableContinuousTapInput()
@@ -11425,6 +11540,16 @@ class IMEService : InputMethodService(), LifecycleOwner, InputConnection,
         onDeleteLongPressUp.set(true)
         deleteLongPressJob?.cancel()
         deleteLongPressJob = null
+    }
+
+    private fun calculateDeleteLongPressDelay(longPressStartTime: Long): Long {
+        val elapsed = (SystemClock.elapsedRealtime() - longPressStartTime)
+            .coerceAtMost(DELETE_LONG_PRESS_ACCEL_DURATION_MS)
+        val progress = elapsed.toFloat() / DELETE_LONG_PRESS_ACCEL_DURATION_MS.toFloat()
+        val easedProgress = progress * progress * progress
+        val delayRange = (LONG_DELAY_TIME - MIN_LONG_DELAY_TIME).toFloat()
+        val nextDelay = LONG_DELAY_TIME - (delayRange * easedProgress)
+        return nextDelay.toLong().coerceAtLeast(MIN_LONG_DELAY_TIME)
     }
 
     private fun enableContinuousTapInput() {

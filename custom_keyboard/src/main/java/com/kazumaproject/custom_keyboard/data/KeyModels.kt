@@ -59,6 +59,7 @@ sealed class KeyAction {
     data object ToggleKatakana : KeyAction()    // カタカナ切り替え
 
     data object VoiceInput : KeyAction()
+    data object Proofread : KeyAction()
 }
 
 data class KeyData(
@@ -116,5 +117,4 @@ enum class ShapeType {
     CIRCLE,
     ROUNDED_SQUARE
 }
-
 

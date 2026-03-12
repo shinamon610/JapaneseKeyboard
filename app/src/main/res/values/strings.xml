@@ -43,6 +43,14 @@
     <string name="henkan_delete_key_action_summary_off">削除キータップ：ハイライト解除</string>
 
     <string name="category_function_title">機能</string>
+    <string name="gemini_api_key_title">Gemini API Key</string>
+    <string name="gemini_api_key_dialog_title">Gemini API Key を入力</string>
+    <string name="gemini_api_key_summary_not_set">未設定です。校正キーを使うには API Key が必要です。</string>
+    <string name="gemini_api_key_summary_set">設定済みです。</string>
+    <string name="proofread_selection_required">校正するには文字列を選択してください。</string>
+    <string name="proofread_api_key_required">Gemini API Key が未設定です。</string>
+    <string name="proofread_in_progress">校正中です。</string>
+    <string name="proofread_failed">校正に失敗しました。</string>
     <string name="category_romaji_conversion_title">ローマ字変換</string>
     <string name="category_qwerty_keyboard_title">QWERTY キーボード</string>
     <string name="category_symbol_keyboard_title">記号キーボード</string>

@@ -3,10 +3,12 @@ package com.kazumaproject.markdownhelperkeyboard.setting_activity.ui.setting
 import android.annotation.SuppressLint
 import android.os.Build
 import android.os.Bundle
+import android.text.InputType
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.content.ContextCompat
 import androidx.core.os.LocaleListCompat
 import androidx.navigation.fragment.findNavController
+import androidx.preference.EditTextPreference
 import androidx.preference.ListPreference
 import androidx.preference.Preference
 import androidx.preference.PreferenceFragmentCompat
@@ -44,6 +46,25 @@ class CommonPreferenceFragment : PreferenceFragmentCompat() {
                     AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags("ja"))
                 } else {
                     AppCompatDelegate.setApplicationLocales(LocaleListCompat.getEmptyLocaleList())
+                }
+                true
+            }
+        }
+
+        findPreference<EditTextPreference>("gemini_api_key_preference")?.apply {
+            setOnBindEditTextListener { editText ->
+                editText.inputType =
+                    InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            }
+            summary =
+                if (text.isNullOrBlank()) getString(R.string.gemini_api_key_summary_not_set)
+                else getString(R.string.gemini_api_key_summary_set)
+            setOnPreferenceChangeListener { preference, newValue ->
+                val pref = preference as EditTextPreference
+                pref.summary = if ((newValue as? String).isNullOrBlank()) {
+                    getString(R.string.gemini_api_key_summary_not_set)
+                } else {
+                    getString(R.string.gemini_api_key_summary_set)
                 }
                 true
             }

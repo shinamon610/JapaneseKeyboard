@@ -143,6 +143,13 @@
 
     <PreferenceCategory android:title="@string/category_function_title">
 
+        <EditTextPreference
+            android:key="gemini_api_key_preference"
+            android:title="@string/gemini_api_key_title"
+            android:summary="@string/gemini_api_key_summary_not_set"
+            android:dialogTitle="@string/gemini_api_key_dialog_title"
+            app:useSimpleSummaryProvider="false" />
+
         <SwitchPreferenceCompat
             android:defaultValue="false"
             android:key="flick_input_only_preference"

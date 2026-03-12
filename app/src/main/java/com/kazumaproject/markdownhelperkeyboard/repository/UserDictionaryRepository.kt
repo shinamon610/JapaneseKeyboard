@@ -18,6 +18,10 @@ class UserDictionaryRepository @Inject constructor(
 ) {
     val allWords: LiveData<List<UserWord>> = userWordDao.getAll()
 
+    suspend fun getAllWordsSuspend(): List<UserWord> {
+        return userWordDao.getAllWordsSuspend()
+    }
+
     fun searchByReadingPrefix(prefix: String): LiveData<List<UserWord>> {
         return userWordDao.searchByReadingPrefix(prefix)
     }
